@@ -1,25 +1,35 @@
 require('dotenv').config();
 
 const apikey = process.env.API_KEY;
-const { Client,Events } = require("discord.js");
+const { Client, Events } = require("discord.js");
 
-
-// crear el cliente
+// Crear el cliente
 const client = new Client({
     intents: 3276799
 });
 
-// creo un evento
+// Evento cuando el cliente está listo
 client.on(Events.ClientReady, async () => {
-    console.log(`Conectado como ${client.user.username}`)
+    console.log(`Conectado como ${client.user.username}`);
 });
 
-// agregar mensaje
+// Manejar mensajes
 client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot) return; // si es un bot, no responde
-    if(message.content === 'Gay' || message.content === 'gay') message.reply("El eze lamebolas");
-})
+    if (message.author.bot) return;
 
-// conectar cliente con la app
-client.login(apikey)
+    const prefix = '!';
+    if (!message.content.startsWith(prefix)) return;
 
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const commandName = args.shift().toLowerCase();
+
+    try {
+        const command = require(`./commands/${commandName}`);
+        command.run(message);
+    } catch (error) {
+        console.log(`Error ejecutando el comando -${commandName}:`, error.message);
+    }
+});
+
+// Conectar cliente con la app
+client.login(apikey);
