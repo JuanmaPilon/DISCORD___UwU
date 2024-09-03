@@ -2,6 +2,10 @@ require('dotenv').config();
 const sqlite3 = require('sqlite3').verbose();
 const { Client, Events } = require("discord.js");
 const apikey = process.env.API_KEY;
+const { checkRank } = require('./utils.js');
+
+const userActivity = new Map(); // Esto debería estar al principio del archivo index.js
+
 
 // creo el client
 const client = new Client({
@@ -14,8 +18,12 @@ const db = new sqlite3.Database('./xp.sqlite', (err) => {
         console.error("Error al abrir la base de datos", err.message);
     } else {
         console.log("Conectado a la base de datos SQLite");
-        // si no existe crea la tabla
-        db.run("CREATE TABLE IF NOT EXISTS xp (userId TEXT PRIMARY KEY, xp INTEGER)", (err) => {
+        // Crear la tabla si no existe o si la has eliminado
+        db.run(`CREATE TABLE IF NOT EXISTS xp (
+            userId TEXT PRIMARY KEY,
+            xp INTEGER,
+            level INTEGER
+        )`, (err) => {
             if (err) {
                 console.error("Error al crear la tabla XP", err.message);
             }
@@ -29,17 +37,18 @@ client.on(Events.ClientReady, async () => {
 });
 
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
-    const userId = newState.id;
+    const userId = newState.id || oldState.id;
 
     if (!oldState.channelId && newState.channelId) {
-        userActivity.set(userId, Date.now()); // almacena el tiempo de conexión
-    }  // si el usuario sale de un canal de voz
-    else if (oldState.channelId && !newState.channelId) {
+        console.log(`Usuario ${userId} se conectó a un canal de voz.`);
+        userActivity.set(userId, Date.now());
+    } else if (oldState.channelId && !newState.channelId) {
+        console.log(`Usuario ${userId} se desconectó de un canal de voz.`);
         const joinTime = userActivity.get(userId);
         if (joinTime) {
             const timeSpent = Date.now() - joinTime;
-            userActivity.delete(userId); // limpia luego del cálculo
-            giveXP(userId, timeSpent); // le da la exp
+            userActivity.delete(userId);
+            giveXP(userId, timeSpent);
         }
     }
 });
@@ -49,58 +58,50 @@ function giveXP(userId, timeSpent) {
     const minutesSpent = Math.floor(timeSpent / 60000); // convertir a minutos
     const xpEarned = minutesSpent;
 
-    db.get("SELECT xp FROM xp WHERE userId = ?", [userId], (err, row) => {
+    console.log(`XP ganada: ${xpEarned} minutos.`);
+
+    db.get("SELECT xp, level FROM xp WHERE userId = ?", [userId], (err, row) => {
         if (err) {
-            console.error("Error al recuperar XP", err.message);
-        } else {
-            let newXP = xpEarned;
-            if (row) {
-                newXP += row.xp;
-            }
-            db.run("INSERT INTO xp (userId, xp) VALUES (?, ?) ON CONFLICT(userId) DO UPDATE SET xp = ?", [userId, newXP, newXP], (err) => {
-                if (err) {
-                    console.error("Error al actualizar XP", err.message);
-                }
-                checkRank(userId, newXP);
-            });
+            return console.error("Error al recuperar XP", err.message);
         }
+
+        let newXP = xpEarned;
+        let currentLevel = 0;
+
+        if (row) {
+            console.log(`Registro encontrado para el usuario ${userId}: XP = ${row.xp}, Nivel = ${row.level}`);
+            newXP += row.xp;
+            currentLevel = row.level || 0; // Asegúrate de que currentLevel sea 0 si no existe
+        } else {
+            console.log(`No se encontró registro para el usuario ${userId}. Se creará un nuevo registro.`);
+        }
+
+        console.log(`XP total para el usuario ${userId}: ${newXP}, Nivel actual: ${currentLevel}`);
+
+        // Calcular el nuevo nivel basado en la XP actual
+        let newLevel = 0;
+        for (const level of levels) {
+            if (newXP >= level.xpRequired) {
+                newLevel = level.level;
+            } else {
+                break;
+            }
+        }
+
+        console.log(`Nuevo nivel calculado para el usuario ${userId}: ${newLevel}`);
+
+        // Aquí se inserta o actualiza la base de datos
+        db.run("INSERT INTO xp (userId, xp, level) VALUES (?, ?, ?) ON CONFLICT(userId) DO UPDATE SET xp = ?, level = ?", 
+               [userId, newXP, newLevel, newXP, newLevel], (err) => {
+            if (err) {
+                return console.error("Error al actualizar XP y Nivel", err.message);
+            }
+            console.log(`XP y nivel actualizados en la base de datos para el usuario ${userId}.`);
+            checkRank(client, userId, newXP, newLevel); // Pasar también el nuevo nivel a checkRank
+        });
     });
 }
 
-// checkea el rank del usuario
-async function checkRank(userId, newXP) { 
-    let rank;
-    let roleId;
-
-    if (newXP < 100) {
-        rank = 'Rankless';
-        roleId = '1213569512641921095';
-    } else if (newXP < 500) {
-        rank = 'Knight';
-        roleId = 'ID_DEL_ROL_KNIGHT';
-    } else if (newXP < 1000) {
-        rank = 'Uncommon Knight';
-        roleId = 'ID_DEL_ROL_UNCOMMON_KNIGHT';
-    } else {
-        rank = 'Legendary Knight';
-        roleId = '1082051215413747923'; 
-    }
-
-    try {
-        const member = await client.guilds.cache.first().members.fetch(userId);  // Usar await para obtener el miembro
-        if (member) {
-            const role = member.guild.roles.cache.get(roleId);
-            if (role) {
-                await member.roles.add(role);  // Asignar el rol al usuario
-                member.send(`¡Felicitaciones! Has alcanzado el rango de **${rank}** con ${newXP} XP y se te ha asignado el rol correspondiente.`);
-            } else {
-                console.error(`No se encontró el rol con ID ${roleId}`);
-            }
-        }
-    } catch (error) {
-        console.error("Error al asignar el rol:", error);
-    }
-}
 
 
 // message handler

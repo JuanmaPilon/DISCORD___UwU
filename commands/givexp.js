@@ -1,4 +1,5 @@
-const sqlite3 = require('sqlite3').verbose();
+const sqlite3 = require('sqlite3').verbose(); 
+const { checkRank } = require('../utils.js');
 
 module.exports = {
     description: 'Otorga XP a un usuario especificado',
@@ -55,36 +56,4 @@ module.exports = {
     }
 };
 
-async function checkRank(client,userId, newXP) {  // Marca la función como async
-    let rank;
-    let roleId;
 
-    if (newXP < 100) {
-        rank = 'Rankless';
-        roleId = '1213569512641921095';  // Reemplaza con el ID real del rol
-    } else if (newXP < 500) {
-        rank = 'Knight';
-        roleId = 'ID_DEL_ROL_KNIGHT';
-    } else if (newXP < 1000) {
-        rank = 'Uncommon Knight';
-        roleId = 'ID_DEL_ROL_UNCOMMON_KNIGHT';
-    } else {
-        rank = 'Legendary Knight';
-        roleId = '1082051215413747923';  // ID real del rol "Legendary Knight"
-    }
-
-    try {
-        const member = await client.guilds.cache.first().members.fetch(userId);  // Usar await para obtener el miembro
-        if (member) {
-            const role = member.guild.roles.cache.get(roleId);
-            if (role) {
-                await member.roles.add(role);  // Asignar el rol al usuario
-                member.send(`¡Felicitaciones! Has alcanzado el rango de **${rank}** con ${newXP} XP y se te ha asignado el rol correspondiente.`);
-            } else {
-                console.error(`No se encontró el rol con ID ${roleId}`);
-            }
-        }
-    } catch (error) {
-        console.error("Error al asignar el rol:", error);
-    }
-}
