@@ -1,33 +1,24 @@
-// utils.js
+const sqlite3 = require('sqlite3').verbose();
+const db = new sqlite3.Database('./db.sqlite', (err) => {
+    if (err) {
+        console.error("Error al abrir la base de datos", err.message);
+    }
+});
 
-const levels = [
-    { level: 1, xpRequired: 20 },
-    { level: 2, xpRequired: 40 },
-    { level: 3, xpRequired: 80 },
-    // Continúa hasta el nivel deseado
-];
-const baseXP = 20; // XP Base para el nivel 1
-
-for (let i = 1; i <= 100; i++) {
-    const xpRequired = baseXP * Math.pow(2, i - 1);
-    levels.push({ level: i, xpRequired: xpRequired, roleId: null }); // Inicialmente sin rol asignado
-}
-
-
-
-// Asocia roles específicos con ciertos niveles si lo deseas
-levels[0].roleId = '1213569512641921095';  // Rol "Rankless"
-levels[9].roleId = 'ID_DEL_ROL_KNIGHT';  // Rol "Knight" en nivel 10
-levels[19].roleId = 'ID_DEL_ROL_UNCOMMON_KNIGHT';  // Rol "Uncommon Knight" en nivel 20
-levels[49].roleId = '1082051215413747923';  // Rol "Legendary Knight" en nivel 50
-// Añade más roles para niveles específicos si es necesario
-
-async function checkRank(client, userId, newXP, newLevel) {
+async function checkRank(client, userId, newXP, newLevel, previousLevel) {
     let roleId = null;
+    const levels = [
+        { level: 1, xpRequired: 20, roleId: '1213569512641921095' },  // "Rankless" rol
+        { level: 10, xpRequired: 5120, roleId: 'ID_DEL_ROL_KNIGHT' },  // "Knight"
+        { level: 20, xpRequired: 10240, roleId: 'ID_DEL_ROL_UNCOMMON_KNIGHT' },  // "Uncommon Knight"
+        { level: 50, xpRequired: 51200, roleId: '1082051215413747923' }  // "Legendary Knight"
+    ];
 
+    // Encuentra el rol adecuado para el nuevo nivel
     for (const level of levels) {
-        if (newLevel === level.level) {
+        if (newLevel >= level.level) {
             roleId = level.roleId;
+        } else {
             break;
         }
     }
@@ -38,9 +29,8 @@ async function checkRank(client, userId, newXP, newLevel) {
             const currentRoles = member.roles.cache;
             const currentRoleIds = currentRoles.map(role => role.id);
 
+            // Elimina el rol anterior, si existe
             let roleToRemove = null;
-
-            // Identificar si el usuario ya tiene un rol de nivel más alto o igual
             for (const level of levels) {
                 if (currentRoleIds.includes(level.roleId) && level.level < newLevel) {
                     roleToRemove = level.roleId;
@@ -52,6 +42,7 @@ async function checkRank(client, userId, newXP, newLevel) {
                 console.log(`Rol ${roleToRemove} eliminado del usuario ${userId}.`);
             }
 
+            // Asigna el nuevo rol
             if (roleId) {
                 const newRole = member.guild.roles.cache.get(roleId);
                 if (newRole) {
@@ -60,11 +51,12 @@ async function checkRank(client, userId, newXP, newLevel) {
                 } else {
                     console.error(`No se encontró el rol con ID ${roleId}`);
                 }
+            }
 
+            // Actualiza el apodo solo si el nivel ha cambiado
+            if (newLevel !== previousLevel) {
                 const originalNickname = member.nickname || member.user.username;
-                const newNickname = `${originalNickname.split(' | LvL ')[0]} | LvL ${newLevel}`;
-                
-                console.log(`Intentando cambiar el apodo de ${originalNickname} a ${newNickname} para el usuario ${userId}.`);
+                const newNickname = `${originalNickname.split(' [')[0]} [${newLevel}]`;
 
                 await member.setNickname(newNickname).then(() => {
                     console.log(`Apodo de ${userId} cambiado a ${newNickname}.`);
@@ -72,7 +64,21 @@ async function checkRank(client, userId, newXP, newLevel) {
                     console.error(`No se pudo actualizar el apodo del usuario ${userId}:`, err);
                 });
 
-                member.send(`¡Felicitaciones! Has alcanzado el nivel **${newLevel}** con ${newXP} XP. Se te ha asignado el rol correspondiente y se ha actualizado tu apodo a ${newNickname}.`);
+                // Obtener el canal desde la base de datos
+                db.get("SELECT value FROM settings WHERE key = 'level_channel'", (err, row) => {
+                    if (err || !row) {
+                        return console.error("No se pudo obtener el canal para actualizaciones de nivel:", err.message);
+                    }
+
+                    const channelId = row.value;
+                    const channel = client.channels.cache.get(channelId);
+
+                    if (channel) {
+                        channel.send(`¡${member.user.username} ha alcanzado el nivel **${newLevel}** con ${newXP} XP! Su apodo se ha actualizado a ${newNickname}.`);
+                    } else {
+                        console.error(`No se encontró el canal con ID ${channelId}`);
+                    }
+                });
             }
         }
     } catch (error) {

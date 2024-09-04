@@ -1,126 +1,53 @@
-require('dotenv').config();
-const sqlite3 = require('sqlite3').verbose();
-const { Client, Events } = require("discord.js");
-const apikey = process.env.API_KEY;
-const { checkRank } = require('./utils.js');
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+const { token } = require('./config.json');
 
-const userActivity = new Map(); // Esto debería estar al principio del archivo index.js
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
+client.commands = new Collection();
 
-// creo el client
-const client = new Client({
-    intents: 3276799
-});
+// Cargar los comandos desde la carpeta 'commands'
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
-// conecta con la bd
-const db = new sqlite3.Database('./xp.sqlite', (err) => {
-    if (err) {
-        console.error("Error al abrir la base de datos", err.message);
-    } else {
-        console.log("Conectado a la base de datos SQLite");
-        // Crear la tabla si no existe o si la has eliminado
-        db.run(`CREATE TABLE IF NOT EXISTS xp (
-            userId TEXT PRIMARY KEY,
-            xp INTEGER,
-            level INTEGER
-        )`, (err) => {
-            if (err) {
-                console.error("Error al crear la tabla XP", err.message);
-            }
-        });
+for (const file of commandFiles) {
+    const command = require(path.join(commandsPath, file));
+    
+    // Depuración: Ver qué comando se está cargando
+    console.log(`Cargando archivo de comando: ${file}`);
+    console.log(`Contenido del comando:`, command);
+
+    // Verificar si el comando tiene la estructura correcta
+    if (!command.data || !command.data.name) {
+        console.error(`El archivo ${file} no tiene la propiedad 'data' o 'name'.`);
+        continue;  // Ignora este archivo y sigue con el siguiente
     }
-});
 
-// si el cliente esta listo con async
-client.on(Events.ClientReady, async () => {
-    console.log(`Conectado como ${client.user.username}`);
-});
-
-client.on(Events.VoiceStateUpdate, (oldState, newState) => {
-    const userId = newState.id || oldState.id;
-
-    if (!oldState.channelId && newState.channelId) {
-        console.log(`Usuario ${userId} se conectó a un canal de voz.`);
-        userActivity.set(userId, Date.now());
-    } else if (oldState.channelId && !newState.channelId) {
-        console.log(`Usuario ${userId} se desconectó de un canal de voz.`);
-        const joinTime = userActivity.get(userId);
-        if (joinTime) {
-            const timeSpent = Date.now() - joinTime;
-            userActivity.delete(userId);
-            giveXP(userId, timeSpent);
-        }
-    }
-});
-
-// function para dar la xp
-function giveXP(userId, timeSpent) {
-    const minutesSpent = Math.floor(timeSpent / 60000); // convertir a minutos
-    const xpEarned = minutesSpent;
-
-    console.log(`XP ganada: ${xpEarned} minutos.`);
-
-    db.get("SELECT xp, level FROM xp WHERE userId = ?", [userId], (err, row) => {
-        if (err) {
-            return console.error("Error al recuperar XP", err.message);
-        }
-
-        let newXP = xpEarned;
-        let currentLevel = 0;
-
-        if (row) {
-            console.log(`Registro encontrado para el usuario ${userId}: XP = ${row.xp}, Nivel = ${row.level}`);
-            newXP += row.xp;
-            currentLevel = row.level || 0; // Asegúrate de que currentLevel sea 0 si no existe
-        } else {
-            console.log(`No se encontró registro para el usuario ${userId}. Se creará un nuevo registro.`);
-        }
-
-        console.log(`XP total para el usuario ${userId}: ${newXP}, Nivel actual: ${currentLevel}`);
-
-        // Calcular el nuevo nivel basado en la XP actual
-        let newLevel = 0;
-        for (const level of levels) {
-            if (newXP >= level.xpRequired) {
-                newLevel = level.level;
-            } else {
-                break;
-            }
-        }
-
-        console.log(`Nuevo nivel calculado para el usuario ${userId}: ${newLevel}`);
-
-        // Aquí se inserta o actualiza la base de datos
-        db.run("INSERT INTO xp (userId, xp, level) VALUES (?, ?, ?) ON CONFLICT(userId) DO UPDATE SET xp = ?, level = ?", 
-               [userId, newXP, newLevel, newXP, newLevel], (err) => {
-            if (err) {
-                return console.error("Error al actualizar XP y Nivel", err.message);
-            }
-            console.log(`XP y nivel actualizados en la base de datos para el usuario ${userId}.`);
-            checkRank(client, userId, newXP, newLevel); // Pasar también el nuevo nivel a checkRank
-        });
-    });
+    client.commands.set(command.data.name, command);
 }
 
+client.on('interactionCreate', async interaction => {
+    // Verificar si es un comando
+    if (!interaction.isCommand()) return;
 
+    console.log(`Comando recibido: ${interaction.commandName}`);  // Agregar este log
 
-// message handler
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot) return;
+    const command = client.commands.get(interaction.commandName);
 
-    const prefix = '!';
-    if (!message.content.startsWith(prefix)) return;
-
-    const args = message.content.slice(prefix.length).trim().split(/ +/);
-    const commandName = args.shift().toLowerCase();
+    if (!command) return;
 
     try {
-        const command = require(`./commands/${commandName}`);
-        command.run(message, client);
+        await command.execute(interaction);  // Ejecutar el comando
     } catch (error) {
-        console.log(`Error ejecutando el comando -${commandName}:`, error.message);
+        console.error(error);
+        await interaction.reply({ content: 'Hubo un error al ejecutar el comando.', ephemeral: true });
     }
 });
 
-// conecto el client
-client.login(apikey);
+// Iniciar sesión con el token del bot
+client.once('ready', () => {
+    console.log(`Conectado como ${client.user.tag}`);
+});
+
+client.login(token);
